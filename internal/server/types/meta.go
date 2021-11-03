@@ -1,4 +1,4 @@
-package vars
+package types
 
 import uuid "github.com/satori/go.uuid"
 
@@ -14,4 +14,9 @@ type ServerMetadata struct {
 	Role  Role
 	LAddr string
 	RAddr string
+}
+
+type ConfigMeta struct {
+	Name string
+	Tags []string
 }

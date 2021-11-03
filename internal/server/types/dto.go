@@ -1,4 +1,4 @@
-package vars
+package types
 
 import uuid "github.com/satori/go.uuid"
 

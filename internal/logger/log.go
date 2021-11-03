@@ -38,3 +38,7 @@ func (l *XLogger) Error(format string, v ...interface{}) {
 		log.Printf(fmt.Sprintf("[%s] %s", color.Green("ERR"), format), v...)
 	}
 }
+
+func (l *XLogger) Fatal(format string, v ...interface{}) {
+	log.Fatalf(fmt.Sprintf("[%s] %s", color.Green("FATAL"), format), v...)
+}

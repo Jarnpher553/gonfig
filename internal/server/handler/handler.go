@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/Jarnpher553/gonfig/internal/server/event"
-	"github.com/Jarnpher553/gonfig/internal/server/vars"
+	"github.com/Jarnpher553/gonfig/internal/server/types"
 	"github.com/Jarnpher553/gonfig/internal/utility/color"
 	"io/ioutil"
 	"log"
@@ -12,10 +12,10 @@ import (
 	"strings"
 )
 
-type HandlerFunc func(s *vars.ServiceCtx, method string) func(w http.ResponseWriter, r *http.Request)
+type HandlerFunc func(s *types.ServiceCtx, method string) func(w http.ResponseWriter, r *http.Request)
 
 // RegisterSlaveHandler 注册从节点
-func RegisterSlaveHandler(s *vars.ServiceCtx, method string) func(w http.ResponseWriter, r *http.Request) {
+func RegisterSlaveHandler(s *types.ServiceCtx, method string) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != method {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -31,7 +31,7 @@ func RegisterSlaveHandler(s *vars.ServiceCtx, method string) func(w http.Respons
 			return
 		}
 
-		var meta vars.SlaveMetaReq
+		var meta types.SlaveMetaReq
 		err = json.Unmarshal(body, &meta)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -39,13 +39,13 @@ func RegisterSlaveHandler(s *vars.ServiceCtx, method string) func(w http.Respons
 			return
 		}
 
-		slave := vars.ServerMetadata{
+		slave := types.ServerMetadata{
 			ID:    meta.ID,
-			Role:  vars.Role(meta.Role),
+			Role:  types.Role(meta.Role),
 			RAddr: meta.Addr,
 		}
 
-		err = s.Store.Put([]byte(fmt.Sprintf("slave/%s", slave.ID)), []byte(fmt.Sprintf("%s", slave.RAddr)))
+		err = s.Store.Put([]byte(fmt.Sprintf(types.SlaveFormat, slave.ID)), []byte(fmt.Sprintf("%s", slave.RAddr)))
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			w.Write([]byte(http.StatusText(http.StatusInternalServerError)))
@@ -56,7 +56,7 @@ func RegisterSlaveHandler(s *vars.ServiceCtx, method string) func(w http.Respons
 		defer s.Mux.Unlock()
 		s.Slaves = append(s.Slaves, &slave)
 
-		log.Printf("Slave id:[%s] addr:[%s] online", color.Green(slave.ID), color.Green(slave.RAddr))
+		s.Logger.Info("Slave id:[%s] addr:[%s] online", color.Green(slave.ID), color.Green(slave.RAddr))
 
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(http.StatusText(http.StatusOK)))
@@ -64,7 +64,7 @@ func RegisterSlaveHandler(s *vars.ServiceCtx, method string) func(w http.Respons
 }
 
 // UnregisterSlaveHandler 注销从节点
-func UnregisterSlaveHandler(s *vars.ServiceCtx, method string) func(w http.ResponseWriter, r *http.Request) {
+func UnregisterSlaveHandler(s *types.ServiceCtx, method string) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != method {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -80,7 +80,7 @@ func UnregisterSlaveHandler(s *vars.ServiceCtx, method string) func(w http.Respo
 			return
 		}
 
-		var meta vars.SlaveMetaReq
+		var meta types.SlaveMetaReq
 		err = json.Unmarshal(body, &meta)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -99,7 +99,7 @@ func UnregisterSlaveHandler(s *vars.ServiceCtx, method string) func(w http.Respo
 		}
 
 		if index >= 0 {
-			err := s.Store.Delete([]byte(fmt.Sprintf("slave/%s", meta.ID)))
+			err := s.Store.Delete([]byte(fmt.Sprintf(types.SlaveFormat, meta.ID)))
 			if err != nil {
 				w.WriteHeader(http.StatusInternalServerError)
 				w.Write([]byte(http.StatusText(http.StatusInternalServerError)))
@@ -111,7 +111,7 @@ func UnregisterSlaveHandler(s *vars.ServiceCtx, method string) func(w http.Respo
 				s.Slaves = append(s.Slaves[:index], s.Slaves[index+1:]...)
 			}
 
-			log.Printf("Slave id:[%s] addr:[%s] offline", color.Green(meta.ID), color.Green(meta.Addr))
+			s.Logger.Info("Slave id:[%s] addr:[%s] offline", color.Green(meta.ID), color.Green(meta.Addr))
 		}
 
 		w.WriteHeader(http.StatusOK)
@@ -120,7 +120,7 @@ func UnregisterSlaveHandler(s *vars.ServiceCtx, method string) func(w http.Respo
 }
 
 // SyncConfigurationHandler 主从同步配置
-func SyncConfigurationHandler(s *vars.ServiceCtx, method string) func(w http.ResponseWriter, r *http.Request) {
+func SyncConfigurationHandler(s *types.ServiceCtx, method string) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != method {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -136,7 +136,7 @@ func SyncConfigurationHandler(s *vars.ServiceCtx, method string) func(w http.Res
 			return
 		}
 
-		var req vars.SyncConfigReq
+		var req types.SyncConfigReq
 		err = json.Unmarshal(body, &req)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -144,7 +144,7 @@ func SyncConfigurationHandler(s *vars.ServiceCtx, method string) func(w http.Res
 			return
 		}
 		for _, c := range req.Datum {
-			err = s.Store.Put([]byte(fmt.Sprintf("config/%s/#%s", c.Name, strings.Join(c.Tag, "#"))), []byte(c.Body))
+			err = s.Store.Put([]byte(fmt.Sprintf(types.ConfigFormat, c.Name, strings.Join(c.Tag, "#"))), []byte(c.Body))
 			if err != nil {
 				w.WriteHeader(http.StatusInternalServerError)
 				w.Write([]byte(http.StatusText(http.StatusInternalServerError)))
@@ -159,7 +159,7 @@ func SyncConfigurationHandler(s *vars.ServiceCtx, method string) func(w http.Res
 }
 
 // PushConfigHandler 推送配置
-func PushConfigHandler(s *vars.ServiceCtx, method string) func(w http.ResponseWriter, r *http.Request) {
+func PushConfigHandler(s *types.ServiceCtx, method string) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != method {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -175,7 +175,7 @@ func PushConfigHandler(s *vars.ServiceCtx, method string) func(w http.ResponseWr
 			return
 		}
 
-		var c vars.PushConfigReq
+		var c types.PushConfigReq
 		err = json.Unmarshal(body, &c)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -183,7 +183,7 @@ func PushConfigHandler(s *vars.ServiceCtx, method string) func(w http.ResponseWr
 			return
 		}
 
-		cfgName := fmt.Sprintf("config/%s/#%s", c.Name, strings.Join(c.Tag, "#"))
+		cfgName := fmt.Sprintf(types.ConfigFormat, c.Name, strings.Join(c.Tag, "#"))
 		err = s.Store.Put([]byte(cfgName), []byte(c.Body))
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -200,7 +200,7 @@ func PushConfigHandler(s *vars.ServiceCtx, method string) func(w http.ResponseWr
 }
 
 // PullConfigHandler 拉去配置
-func PullConfigHandler(s *vars.ServiceCtx, method string) func(w http.ResponseWriter, r *http.Request) {
+func PullConfigHandler(s *types.ServiceCtx, method string) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != method {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -216,7 +216,7 @@ func PullConfigHandler(s *vars.ServiceCtx, method string) func(w http.ResponseWr
 			return
 		}
 
-		var c vars.PullConfigReq
+		var c types.PullConfigReq
 		err = json.Unmarshal(body, &c)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -231,7 +231,7 @@ func PullConfigHandler(s *vars.ServiceCtx, method string) func(w http.ResponseWr
 			return
 		}
 
-		var resp vars.PullConfigResp
+		var resp types.PullConfigResp
 		resp.Body = string(v)
 		respBytes, err := json.Marshal(&resp)
 		if err != nil {
@@ -246,7 +246,7 @@ func PullConfigHandler(s *vars.ServiceCtx, method string) func(w http.ResponseWr
 	}
 }
 
-func HealthHandler(s *vars.ServiceCtx, method string) func(w http.ResponseWriter, r *http.Request) {
+func HealthHandler(s *types.ServiceCtx, method string) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != method {
 			w.WriteHeader(http.StatusMethodNotAllowed)

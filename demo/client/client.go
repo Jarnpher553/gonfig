@@ -2,20 +2,20 @@ package main
 
 import (
 	"fmt"
-	"github.com/Jarnpher553/gonfig/internal/client"
-	"github.com/Jarnpher553/gonfig/internal/types"
+	"github.com/Jarnpher553/gonfig/component/client"
+	"github.com/Jarnpher553/gonfig/component/metadata"
 )
 
 func main() {
 	c, err := client.New(&client.Config{
-		CfgMeta: &types.ConfigMeta{
+		Metadata: &metadata.ConfigMeta{
 			Name: "test",
-			Tag: []string{
+			Tags: []string{
 				"app:lll",
 				"ccc:wewf",
 			},
 		},
-		Servers: []string{"127.0.0.1:9020"},
+		Endpoints: []string{"127.0.0.1:9020"},
 	})
 	if err != nil {
 		return

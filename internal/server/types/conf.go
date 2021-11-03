@@ -1,4 +1,4 @@
-package vars
+package types
 
 type ServerCfg struct {
 	Addr       string

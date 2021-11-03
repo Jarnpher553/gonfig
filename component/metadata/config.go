@@ -1,7 +1,6 @@
-package types
+package metadata
 
 type ConfigMeta struct {
 	Name string
-	Tag  []string
+	Tags []string
 }
-

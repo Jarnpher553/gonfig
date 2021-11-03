@@ -12,8 +12,7 @@ import (
 	"github.com/Jarnpher553/gonfig/internal/server/listener"
 	"github.com/Jarnpher553/gonfig/internal/server/route"
 	"github.com/Jarnpher553/gonfig/internal/server/store"
-	"github.com/Jarnpher553/gonfig/internal/server/vars"
-	"github.com/Jarnpher553/gonfig/internal/types"
+	"github.com/Jarnpher553/gonfig/internal/server/types"
 	"github.com/Jarnpher553/gonfig/internal/utility/color"
 	"github.com/Jarnpher553/gonfig/internal/utility/retry"
 	"github.com/common-nighthawk/go-figure"
@@ -23,7 +22,6 @@ import (
 	"github.com/satori/go.uuid"
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/util"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -35,19 +33,14 @@ import (
 	"time"
 )
 
-const (
-	Password    = "U2FsdGVkX18Wi+guhMZL8DvCOqfA6j/MWMdUOv9tOvQ="
-	TopicConfig = "config/%s/#%s"
-)
-
 type EventHandler func(map[string]interface{}) error
 
 type Server struct {
-	meta          *vars.ServerMetadata
+	meta          *types.ServerMetadata
 	httpServer    *http.Server
 	psServer      *pubsub.Server
 	mux           *sync.Mutex
-	slaves        []*vars.ServerMetadata
+	slaves        []*types.ServerMetadata
 	store         store.Store
 	listener      *listener.Listener
 	rpcListener   *listener.Listener
@@ -56,18 +49,23 @@ type Server struct {
 	routes        []*route.Router
 	trigger       event.Trigger
 	eventHandlers map[string]EventHandler
+	logger        *logger.XLogger
 }
 
 func New() *Server {
-	cfg := cmdflag.Parse()
+	logx := &logger.XLogger{}
+
+	cfg := cmdflag.Parse(logx)
+
+	logx.SetLevel(alog.LevelInfo)
 
 	db, err := leveldb.OpenFile("./db", nil)
 	if err != nil {
-		log.Fatal("Leveldb open:", err)
+		logx.Fatal("Leveldb open: %s", err)
 	}
 	start := strings.Index(cfg.Addr, ":")
 	s := &Server{
-		meta: &vars.ServerMetadata{
+		meta: &types.ServerMetadata{
 			ID:    uuid.NewV4(),
 			Role:  cfg.Role,
 			RAddr: cfg.Addr,
@@ -75,31 +73,30 @@ func New() *Server {
 		},
 		store:   &store.LeveldbStore{DB: db},
 		trigger: make(chan *event.Event, 5),
+		logger:  logx,
 	}
 	s.eventHandlers = map[string]EventHandler{
 		event.SyncConfig: s.eventSyncHandler,
 		event.PubConfig:  s.eventPubHandler,
 	}
 
-	if s.meta.Role == vars.RoleMaster {
+	if s.meta.Role == types.RoleMaster {
 		s.mux = &sync.Mutex{}
-		s.slaves = make([]*vars.ServerMetadata, 0)
-	} else if s.meta.Role == vars.RoleSlave {
+		s.slaves = make([]*types.ServerMetadata, 0)
+	} else if s.meta.Role == types.RoleSlave {
 		s.masterAddr = cfg.MasterAddr
 	}
 
-	lgx := &logger.XLogger{}
-	lgx.SetLevel(alog.LevelInfo)
-	alog.SetLogger(lgx)
+	alog.SetLogger(logx)
 	psServer := pubsub.NewServer()
-	psServer.Password = Password
+	psServer.Password = types.PubSubPassword
 	psServer.Handler.SetLogTag("[" + color.Green("PubSub") + "]")
 	psServer.Handler.Handle("/echo", func(c *arpc.Context) {
 		var in types.ConfigMeta
 		if err := c.Bind(&in); err != nil {
 			return
 		}
-		cfgName := fmt.Sprintf(TopicConfig, in.Name, strings.Join(in.Tag, "#"))
+		cfgName := fmt.Sprintf(types.ConfigFormat, in.Name, strings.Join(in.Tags, "#"))
 		v, err := s.store.Get([]byte(cfgName))
 		if err != nil {
 			return
@@ -121,11 +118,11 @@ func New() *Server {
 	}
 	s.serverMux = serverMux
 
-	if s.meta.Role == vars.RoleMaster {
+	if s.meta.Role == types.RoleMaster {
 		s.route(route.NewRouter(http.MethodPost, "/register"), handler.RegisterSlaveHandler)
 		s.route(route.NewRouter(http.MethodPost, "/unregister"), handler.UnregisterSlaveHandler)
 		s.route(route.NewRouter(http.MethodPost, "/push"), handler.PushConfigHandler)
-	} else if s.meta.Role == vars.RoleSlave {
+	} else if s.meta.Role == types.RoleSlave {
 		s.route(route.NewRouter(http.MethodPost, "/sync"), handler.SyncConfigurationHandler)
 		s.route(route.NewRouter(http.MethodGet, "/health"), handler.HealthHandler)
 	}
@@ -137,20 +134,21 @@ func New() *Server {
 
 func (s *Server) route(r *route.Router, handlerFunc handler.HandlerFunc) {
 	s.routes = append(s.routes, r)
-	s.serverMux.HandleFunc(r.URL, recovery(handlerFunc(&vars.ServiceCtx{
+	s.serverMux.HandleFunc(r.URL, s.recovery(handlerFunc(&types.ServiceCtx{
 		Meta:    s.meta,
 		Slaves:  s.slaves,
 		Store:   s.store,
 		Mux:     s.mux,
 		Trigger: s.trigger,
+		Logger:  s.logger,
 	}, r.Method)))
 }
 
-func recovery(f func(w http.ResponseWriter, r *http.Request)) func(w http.ResponseWriter, r *http.Request) {
+func (s *Server) recovery(f func(w http.ResponseWriter, r *http.Request)) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if err := recover(); err != nil {
-				log.Println("Recover:", err)
+				s.logger.Error("Recover: %s", err)
 			}
 		}()
 		f(w, r)
@@ -159,44 +157,44 @@ func recovery(f func(w http.ResponseWriter, r *http.Request)) func(w http.Respon
 
 func (s *Server) printRoutes() {
 	for i, r := range s.routes {
-		log.Printf("Route [%s] Method [%s] Path [%s]", color.Green(i), color.Green(r.Method), color.Green(r.URL))
+		s.logger.Info("Route [%s] Method [%s] Path [%s]", color.Green(i), color.Green(r.Method), color.Green(r.URL))
 	}
 }
 
 func (s *Server) Serve() {
 	ln, err := listener.NewListener(s.meta.LAddr)
 	if err != nil {
-		log.Fatal("Create listener:", err)
+		s.logger.Fatal("Create listener: %s", err)
 	}
 	s.listener = ln
 
 	figure.NewColorFigure(string(s.meta.Role), "", "green", true).Print()
-	log.Printf("Server [%s]/[%s] listening on [%s]", color.Green(s.meta.Role), color.Green(s.meta.ID), color.Green(s.meta.LAddr))
+	s.logger.Info("Server [%s]/[%s] listening on [%s]", color.Green(s.meta.Role), color.Green(s.meta.ID), color.Green(s.meta.LAddr))
 
 	s.printRoutes()
 
 	go func() {
 		if err := s.httpServer.Serve(ln); err != nil {
-			log.Println("Listen:", err)
+			s.logger.Info("Listen: %s", err)
 		}
 	}()
 
 	rpcPort, _ := strconv.Atoi(strings.Split(s.meta.LAddr, ":")[1])
 	rpcLn, err := listener.NewListener(fmt.Sprintf(":%d", rpcPort+1))
 	if err != nil {
-		log.Fatalln("Create rpc listener:", err)
+		s.logger.Fatal("Create rpc listener: %s", err)
 	}
 	s.rpcListener = rpcLn
 	go func() {
 		if err := s.psServer.Serve(rpcLn); err != nil {
-			log.Println("PubSub Listen:", err)
+			s.logger.Info("PubSub Listen: %s", err)
 		}
 	}()
 
-	if s.meta.Role == vars.RoleSlave {
+	if s.meta.Role == types.RoleSlave {
 		err := s.register()
 		if err != nil {
-			log.Fatalln("Register slave:", err)
+			s.logger.Fatal("Register slave: %s", err)
 		}
 	} else {
 		s.loadSlaves()
@@ -209,34 +207,34 @@ func (s *Server) Serve() {
 
 	<-notify
 
-	if s.meta.Role == vars.RoleSlave {
+	if s.meta.Role == types.RoleSlave {
 		err := s.unregister()
 		if err != nil {
-			log.Println("Unregister slave:", err)
+			s.logger.Info("Unregister slave: %s", err)
 		}
 	}
 
-	log.Println("Shutting down server...")
+	s.logger.Info("Shutting down server...")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := s.httpServer.Shutdown(ctx); err != nil {
-		log.Fatal("Server forced to shutdown: ", err)
+		s.logger.Fatal("Server forced to shutdown: %s", err)
 	}
 
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel2()
 	if err := s.psServer.Shutdown(ctx2); err != nil {
-		log.Fatal("PubSub Server forced to shutdown: ", err)
+		s.logger.Fatal("PubSub Server forced to shutdown: %s", err)
 	}
 
-	log.Println("Server exiting.")
+	s.logger.Info("Server exiting.")
 }
 
 func (s *Server) register() error {
 	url := fmt.Sprintf("http://%s/register", s.masterAddr)
 
-	self := &vars.SlaveMetaReq{
+	self := &types.SlaveMetaReq{
 		ID:   s.meta.ID,
 		Addr: s.meta.RAddr,
 		Role: string(s.meta.Role),
@@ -261,7 +259,7 @@ func (s *Server) register() error {
 func (s *Server) unregister() error {
 	url := fmt.Sprintf("http://%s/unregister", s.masterAddr)
 
-	self := &vars.SlaveMetaReq{
+	self := &types.SlaveMetaReq{
 		ID:   s.meta.ID,
 		Addr: s.meta.RAddr,
 		Role: string(s.meta.RAddr),
@@ -295,7 +293,7 @@ func (s *Server) healthCheck() {
 		var checkFailureCount int
 		ids := make([]uuid.UUID, 0)
 		for idx, slave := range s.slaves {
-			go func(i int, sl *vars.ServerMetadata) {
+			go func(i int, sl *types.ServerMetadata) {
 				defer g.Done()
 				url := fmt.Sprintf("http://%s/health?id=%s", sl.RAddr, sl.ID)
 				var resp *http.Response
@@ -308,7 +306,7 @@ func (s *Server) healthCheck() {
 					return nil
 				}, 1*time.Second)
 				if err != nil || resp.StatusCode != 200 {
-					log.Printf("Slave id:[%s] addr:[%s] health check failure", color.Green(sl.ID), color.Green(sl.RAddr))
+					s.logger.Info("Slave id:[%s] addr:[%s] health check failure", color.Green(sl.ID), color.Green(sl.RAddr))
 					ids = append(ids, sl.ID)
 					sl.ID = uuid.Nil
 					checkFailureCount++
@@ -319,11 +317,11 @@ func (s *Server) healthCheck() {
 
 		if checkFailureCount != 0 {
 			for _, id := range ids {
-				_ = s.store.Delete([]byte(fmt.Sprintf("slave/%s", id)))
+				_ = s.store.Delete([]byte(fmt.Sprintf(types.SlaveFormat, id)))
 			}
 
 			s.mux.Lock()
-			slaves := make([]*vars.ServerMetadata, 0, len(s.slaves))
+			slaves := make([]*types.ServerMetadata, 0, len(s.slaves))
 			for _, slave := range s.slaves {
 				if slave.ID != uuid.Nil {
 					slaves = append(slaves, slave)
@@ -344,22 +342,22 @@ func (s *Server) printSlaves() {
 	}
 	echo += "]"
 
-	log.Println(echo)
+	s.logger.Info(echo)
 }
 
 func (s *Server) loadSlaves() {
 	pairs, err := s.store.Items(util.BytesPrefix([]byte("slave/")))
 	if err != nil {
-		log.Fatalln("Load Slave:", err)
+		s.logger.Info("Load Slave: %s", err)
 	}
 	for _, kv := range pairs {
 		k := string(kv.Key)
 		v := string(kv.Value)
 
 		id, _ := uuid.FromString(strings.Split(k, "/")[1])
-		s.slaves = append(s.slaves, &vars.ServerMetadata{
+		s.slaves = append(s.slaves, &types.ServerMetadata{
 			ID:    id,
-			Role:  vars.RoleSlave,
+			Role:  types.RoleSlave,
 			RAddr: v,
 		})
 	}
@@ -375,17 +373,17 @@ func (s *Server) eventSyncHandler(param map[string]interface{}) error {
 	g := sync.WaitGroup{}
 	g.Add(len(s.slaves))
 	for _, slave := range s.slaves {
-		go func(sl *vars.ServerMetadata) {
+		go func(sl *types.ServerMetadata) {
 			defer g.Done()
 			err := retry.Retry(3, func() error {
 				url := fmt.Sprintf("http://%s/sync", sl.RAddr)
 
-				req := &vars.SyncConfigReq{
-					Datum: make([]*vars.PushConfigReq, 0),
+				req := &types.SyncConfigReq{
+					Datum: make([]*types.PushConfigReq, 0),
 				}
 				pairs, err := s.store.Items(util.BytesPrefix([]byte("config/")))
 				for _, kv := range pairs {
-					var pr vars.PushConfigReq
+					var pr types.PushConfigReq
 					sKey := string(kv.Key)
 					splitKey := strings.Split(sKey, "#")
 					reg := regexp.MustCompile("config/(.*)/")
@@ -414,10 +412,10 @@ func (s *Server) eventSyncHandler(param map[string]interface{}) error {
 			})
 
 			if err != nil {
-				log.Printf("Slave id:[%s] addr:[%s] sync error: %s", color.Green(sl.ID), color.Green(sl.RAddr), err)
+				s.logger.Info("Slave id:[%s] addr:[%s] sync error: %s", color.Green(sl.ID), color.Green(sl.RAddr), err)
 				return
 			}
-			log.Printf("Slave id:[%s] addr:[%s] sync success", color.Green(sl.ID), color.Green(sl.RAddr))
+			s.logger.Info("Slave id:[%s] addr:[%s] sync success", color.Green(sl.ID), color.Green(sl.RAddr))
 		}(slave)
 	}
 	g.Wait()
@@ -427,7 +425,7 @@ func (s *Server) eventSyncHandler(param map[string]interface{}) error {
 func (s *Server) eventPubHandler(param map[string]interface{}) error {
 	err := s.psServer.Publish(param["cfgName"].(string), param["cfgMeta"])
 	if err != nil {
-		log.Printf("Publish [%s] failure: %s", param["cfgName"], err)
+		s.logger.Info("Publish [%s] failure: %s", param["cfgName"], err)
 		return err
 	}
 
