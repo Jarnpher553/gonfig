@@ -9,6 +9,8 @@ const (
 	RoleSlave  = "Slave"
 )
 
+type Slaves = []*ServerMetadata
+
 type ServerMetadata struct {
 	ID    uuid.UUID
 	Role  Role

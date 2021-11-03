@@ -16,6 +16,40 @@ gonfig -role master
 gonfig -role slave -master 127.0.0.1:9019 -addr 8888
 ```
 
+- master
+
+```shell
+  __  __                 _
+ |  \/  |   __ _   ___  | |_    ___   _ __
+ | |\/| |  / _` | / __| | __|  / _ \ | '__|
+ | |  | | | (_| | \__ \ | |_  |  __/ | |
+ |_|  |_|  \__,_| |___/  \__|  \___| |_|
+2021/11/03 16:44:42 [INF] [HttpServer] HttpRouter [0] Method [POST] Path [/register]
+2021/11/03 16:44:42 [INF] [HttpServer] HttpRouter [1] Method [POST] Path [/unregister]
+2021/11/03 16:44:42 [INF] [HttpServer] HttpRouter [2] Method [POST] Path [/push]
+2021/11/03 16:44:42 [INF] [HttpServer] HttpRouter [3] Method [POST] Path [/pull]
+2021/11/03 16:44:42 [INF] [RpcServer] RpcRouter [0] Method [/echo]
+2021/11/03 16:44:42 [INF] [HttpServer] [Master]/[0589d590-3a22-44c9-947a-0e75cde5c813] listening on [:9019]
+2021/11/03 16:44:42 [INF] [RpcServer] Running On: "[::]:9020"
+2021/11/03 16:45:06 [INF] [HttpServer] Slave id:[11aced0f-cc8a-41ea-867e-2c106121f589] addr:[127.0.0.1:8888] online
+```
+
+- slave
+
+```shell
+  ____    _
+ / ___|  | |   __ _  __   __   ___
+ \___ \  | |  / _` | \ \ / /  / _ \
+  ___) | | | | (_| |  \ V /  |  __/
+ |____/  |_|  \__,_|   \_/    \___|
+2021/11/03 16:45:23 [INF] [HttpServer] HttpRouter [0] Method [POST] Path [/sync]
+2021/11/03 16:45:23 [INF] [HttpServer] HttpRouter [1] Method [GET] Path [/health]
+2021/11/03 16:45:23 [INF] [HttpServer] HttpRouter [2] Method [POST] Path [/pull]
+2021/11/03 16:45:23 [INF] [RpcServer] RpcRouter [0] Method [/echo]
+2021/11/03 16:45:23 [INF] [HttpServer] [Slave]/[0f8c69f4-dcec-46f9-b208-e6b9826975f2] listening on [:8888]
+2021/11/03 16:45:23 [INF] [RpcServer] Running On: "[::]:8889"
+```
+
 # example
 
 ## push config

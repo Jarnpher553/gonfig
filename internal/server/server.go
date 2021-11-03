@@ -11,17 +11,16 @@ import (
 	"github.com/Jarnpher553/gonfig/internal/server/handler"
 	"github.com/Jarnpher553/gonfig/internal/server/listener"
 	"github.com/Jarnpher553/gonfig/internal/server/route"
-	"github.com/Jarnpher553/gonfig/internal/server/store"
+	"github.com/Jarnpher553/gonfig/internal/server/rpchandler"
 	"github.com/Jarnpher553/gonfig/internal/server/types"
-	"github.com/Jarnpher553/gonfig/internal/utility/color"
-	"github.com/Jarnpher553/gonfig/internal/utility/retry"
+	"github.com/Jarnpher553/gonfig/internal/store"
+	"github.com/Jarnpher553/gonfig/internal/util/color"
+	"github.com/Jarnpher553/gonfig/internal/util/retry"
 	"github.com/common-nighthawk/go-figure"
-	"github.com/lesismal/arpc"
 	"github.com/lesismal/arpc/extension/pubsub"
 	alog "github.com/lesismal/arpc/log"
 	"github.com/satori/go.uuid"
 	"github.com/syndtr/goleveldb/leveldb"
-	"github.com/syndtr/goleveldb/leveldb/util"
 	"net/http"
 	"os"
 	"os/signal"
@@ -40,29 +39,39 @@ type Server struct {
 	httpServer    *http.Server
 	psServer      *pubsub.Server
 	mux           *sync.Mutex
-	slaves        []*types.ServerMetadata
+	slaves        *types.Slaves
 	store         store.Store
 	listener      *listener.Listener
 	rpcListener   *listener.Listener
 	masterAddr    string
 	serverMux     *http.ServeMux
-	routes        []*route.Router
+	httpRouters   []*route.Router
+	rpcRouters    []string
 	trigger       event.Trigger
 	eventHandlers map[string]EventHandler
 	logger        *logger.XLogger
+	rpcLogger     *logger.XLogger
 }
 
-func New() *Server {
+func New(persist ...store.Store) *Server {
 	logx := &logger.XLogger{}
 
 	cfg := cmdflag.Parse(logx)
 
 	logx.SetLevel(alog.LevelInfo)
+	logx.SetModName("HttpServer")
 
-	db, err := leveldb.OpenFile("./db", nil)
-	if err != nil {
-		logx.Fatal("Leveldb open: %s", err)
+	var st store.Store
+	if len(persist) != 0 && persist[0] != nil {
+		st = persist[0]
+	} else {
+		db, err := leveldb.OpenFile("./db", nil)
+		if err != nil {
+			logx.Fatal("Leveldb open: %s", err)
+		}
+		st = &store.LeveldbStore{DB: db}
 	}
+
 	start := strings.Index(cfg.Addr, ":")
 	s := &Server{
 		meta: &types.ServerMetadata{
@@ -71,9 +80,11 @@ func New() *Server {
 			RAddr: cfg.Addr,
 			LAddr: cfg.Addr[start:],
 		},
-		store:   &store.LeveldbStore{DB: db},
-		trigger: make(chan *event.Event, 5),
-		logger:  logx,
+		store:       st,
+		trigger:     make(chan *event.Event, 5),
+		logger:      logx,
+		httpRouters: make([]*route.Router, 0),
+		rpcRouters:  make([]string, 0),
 	}
 	s.eventHandlers = map[string]EventHandler{
 		event.SyncConfig: s.eventSyncHandler,
@@ -82,31 +93,22 @@ func New() *Server {
 
 	if s.meta.Role == types.RoleMaster {
 		s.mux = &sync.Mutex{}
-		s.slaves = make([]*types.ServerMetadata, 0)
+		slaves := make([]*types.ServerMetadata, 0)
+		s.slaves = &slaves
 	} else if s.meta.Role == types.RoleSlave {
 		s.masterAddr = cfg.MasterAddr
 	}
 
-	alog.SetLogger(logx)
+	logx2 := &logger.XLogger{}
+	logx2.SetLevel(alog.LevelInfo)
+	alog.SetLogger(logx2)
+	s.rpcLogger = logx2
 	psServer := pubsub.NewServer()
 	psServer.Password = types.PubSubPassword
-	psServer.Handler.SetLogTag("[" + color.Green("PubSub") + "]")
-	psServer.Handler.Handle("/echo", func(c *arpc.Context) {
-		var in types.ConfigMeta
-		if err := c.Bind(&in); err != nil {
-			return
-		}
-		cfgName := fmt.Sprintf(types.ConfigFormat, in.Name, strings.Join(in.Tags, "#"))
-		v, err := s.store.Get([]byte(cfgName))
-		if err != nil {
-			return
-		}
-
-		c.Client.Set("config_meta", &in)
-		c.Write(v)
-	})
-
+	psServer.Handler.SetLogTag("[" + color.Green("RpcServer") + "]")
 	s.psServer = psServer
+
+	s.rpcRoute("/echo", rpchandler.EchoHandler)
 
 	serverMux := http.NewServeMux()
 	s.httpServer = &http.Server{
@@ -119,29 +121,43 @@ func New() *Server {
 	s.serverMux = serverMux
 
 	if s.meta.Role == types.RoleMaster {
-		s.route(route.NewRouter(http.MethodPost, "/register"), handler.RegisterSlaveHandler)
-		s.route(route.NewRouter(http.MethodPost, "/unregister"), handler.UnregisterSlaveHandler)
-		s.route(route.NewRouter(http.MethodPost, "/push"), handler.PushConfigHandler)
+		s.httpRoute(route.NewRouter(http.MethodPost, "/register"), handler.RegisterSlaveHandler)
+		s.httpRoute(route.NewRouter(http.MethodPost, "/unregister"), handler.UnregisterSlaveHandler)
+		s.httpRoute(route.NewRouter(http.MethodPost, "/push"), handler.PushConfigHandler)
 	} else if s.meta.Role == types.RoleSlave {
-		s.route(route.NewRouter(http.MethodPost, "/sync"), handler.SyncConfigurationHandler)
-		s.route(route.NewRouter(http.MethodGet, "/health"), handler.HealthHandler)
+		s.httpRoute(route.NewRouter(http.MethodPost, "/sync"), handler.SyncConfigurationHandler)
+		s.httpRoute(route.NewRouter(http.MethodGet, "/health"), handler.HealthHandler)
 	}
 
-	s.route(route.NewRouter(http.MethodPost, "/pull"), handler.PullConfigHandler)
+	s.httpRoute(route.NewRouter(http.MethodPost, "/pull"), handler.PullConfigHandler)
 
 	return s
 }
 
-func (s *Server) route(r *route.Router, handlerFunc handler.HandlerFunc) {
-	s.routes = append(s.routes, r)
-	s.serverMux.HandleFunc(r.URL, s.recovery(handlerFunc(&types.ServiceCtx{
+func (s *Server) rpcRoute(methodName string, handlerFunc rpchandler.RpcHandlerFunc) {
+	s.rpcRouters = append(s.rpcRouters, methodName)
+	serviceCtx := &types.ServiceCtx{
 		Meta:    s.meta,
 		Slaves:  s.slaves,
 		Store:   s.store,
 		Mux:     s.mux,
 		Trigger: s.trigger,
 		Logger:  s.logger,
-	}, r.Method)))
+	}
+	s.psServer.Handler.Handle(methodName, handlerFunc(serviceCtx))
+}
+
+func (s *Server) httpRoute(r *route.Router, handlerFunc handler.HandlerFunc) {
+	s.httpRouters = append(s.httpRouters, r)
+	serviceCtx := &types.ServiceCtx{
+		Meta:    s.meta,
+		Slaves:  s.slaves,
+		Store:   s.store,
+		Mux:     s.mux,
+		Trigger: s.trigger,
+		Logger:  s.logger,
+	}
+	s.serverMux.HandleFunc(r.URL, s.recovery(handlerFunc(serviceCtx, r.Method)))
 }
 
 func (s *Server) recovery(f func(w http.ResponseWriter, r *http.Request)) func(w http.ResponseWriter, r *http.Request) {
@@ -156,8 +172,11 @@ func (s *Server) recovery(f func(w http.ResponseWriter, r *http.Request)) func(w
 }
 
 func (s *Server) printRoutes() {
-	for i, r := range s.routes {
-		s.logger.Info("Route [%s] Method [%s] Path [%s]", color.Green(i), color.Green(r.Method), color.Green(r.URL))
+	for i, r := range s.httpRouters {
+		s.logger.Info("HttpRouter [%s] Method [%s] Path [%s]", color.Green(i), color.Green(r.Method), color.Green(r.URL))
+	}
+	for i, v := range s.rpcRouters {
+		s.rpcLogger.Info("%s RpcRouter [%s] Method [%s]", s.psServer.Handler.LogTag(), color.Green(i), color.Green(v))
 	}
 }
 
@@ -169,10 +188,9 @@ func (s *Server) Serve() {
 	s.listener = ln
 
 	figure.NewColorFigure(string(s.meta.Role), "", "green", true).Print()
-	s.logger.Info("Server [%s]/[%s] listening on [%s]", color.Green(s.meta.Role), color.Green(s.meta.ID), color.Green(s.meta.LAddr))
-
 	s.printRoutes()
 
+	s.logger.Info("[%s]/[%s] listening on [%s]", color.Green(s.meta.Role), color.Green(s.meta.ID), color.Green(s.meta.LAddr))
 	go func() {
 		if err := s.httpServer.Serve(ln); err != nil {
 			s.logger.Info("Listen: %s", err)
@@ -187,7 +205,7 @@ func (s *Server) Serve() {
 	s.rpcListener = rpcLn
 	go func() {
 		if err := s.psServer.Serve(rpcLn); err != nil {
-			s.logger.Info("PubSub Listen: %s", err)
+			s.rpcLogger.Info("%s Listen: %s", s.psServer.Handler.LogTag(), err)
 		}
 	}()
 
@@ -215,20 +233,21 @@ func (s *Server) Serve() {
 	}
 
 	s.logger.Info("Shutting down server...")
-
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := s.httpServer.Shutdown(ctx); err != nil {
-		s.logger.Fatal("Server forced to shutdown: %s", err)
+		s.logger.Fatal("Forced to shutdown: %s", err)
 	}
 
+	s.rpcLogger.Info("%s Shutting down server...", s.psServer.Handler.LogTag())
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel2()
 	if err := s.psServer.Shutdown(ctx2); err != nil {
-		s.logger.Fatal("PubSub Server forced to shutdown: %s", err)
+		s.rpcLogger.Fatal("%s Forced to shutdown: %s", s.psServer.Handler.LogTag(), err)
 	}
 
-	s.logger.Info("Server exiting.")
+	s.logger.Info("Server exiting")
+	s.rpcLogger.Info("%s Server exiting", s.psServer.Handler.LogTag())
 }
 
 func (s *Server) register() error {
@@ -282,17 +301,17 @@ func (s *Server) unregister() error {
 }
 
 func (s *Server) healthCheck() {
-	duration := time.Second * 5
+	duration := time.Second * 10
 	t := time.NewTimer(duration)
 	for {
 		t.Reset(duration)
 		<-t.C
 		g := sync.WaitGroup{}
-		g.Add(len(s.slaves))
+		g.Add(len(*s.slaves))
 
 		var checkFailureCount int
 		ids := make([]uuid.UUID, 0)
-		for idx, slave := range s.slaves {
+		for idx, slave := range *s.slaves {
 			go func(i int, sl *types.ServerMetadata) {
 				defer g.Done()
 				url := fmt.Sprintf("http://%s/health?id=%s", sl.RAddr, sl.ID)
@@ -317,17 +336,18 @@ func (s *Server) healthCheck() {
 
 		if checkFailureCount != 0 {
 			for _, id := range ids {
-				_ = s.store.Delete([]byte(fmt.Sprintf(types.SlaveFormat, id)))
+				key := fmt.Sprintf(types.SlaveFormat, id.String())
+				_ = s.store.Delete([]byte(key))
 			}
 
 			s.mux.Lock()
-			slaves := make([]*types.ServerMetadata, 0, len(s.slaves))
-			for _, slave := range s.slaves {
+			slaves := make([]*types.ServerMetadata, 0, len(*s.slaves))
+			for _, slave := range *s.slaves {
 				if slave.ID != uuid.Nil {
 					slaves = append(slaves, slave)
 				}
 			}
-			s.slaves = slaves
+			*s.slaves = slaves
 			s.mux.Unlock()
 		}
 
@@ -336,17 +356,18 @@ func (s *Server) healthCheck() {
 }
 
 func (s *Server) printSlaves() {
-	echo := "Slaves print [\n"
-	for _, slave := range s.slaves {
-		echo += fmt.Sprintf("\tSlave id:[%s] addr:[%s]\n", color.Green(slave.ID), color.Green(slave.RAddr))
+	echo := "Slaves ["
+	for _, slave := range *s.slaves {
+		echo += fmt.Sprintf("{ Slave id:[%s] addr:[%s] } ", color.Green(slave.ID), color.Green(slave.RAddr))
 	}
+	strings.TrimSuffix(echo, " ")
 	echo += "]"
 
 	s.logger.Info(echo)
 }
 
 func (s *Server) loadSlaves() {
-	pairs, err := s.store.Items(util.BytesPrefix([]byte("slave/")))
+	pairs, err := s.store.Items("slave/")
 	if err != nil {
 		s.logger.Info("Load Slave: %s", err)
 	}
@@ -355,7 +376,7 @@ func (s *Server) loadSlaves() {
 		v := string(kv.Value)
 
 		id, _ := uuid.FromString(strings.Split(k, "/")[1])
-		s.slaves = append(s.slaves, &types.ServerMetadata{
+		*s.slaves = append(*s.slaves, &types.ServerMetadata{
 			ID:    id,
 			Role:  types.RoleSlave,
 			RAddr: v,
@@ -371,8 +392,8 @@ func (s *Server) execEvent() {
 
 func (s *Server) eventSyncHandler(param map[string]interface{}) error {
 	g := sync.WaitGroup{}
-	g.Add(len(s.slaves))
-	for _, slave := range s.slaves {
+	g.Add(len(*s.slaves))
+	for _, slave := range *s.slaves {
 		go func(sl *types.ServerMetadata) {
 			defer g.Done()
 			err := retry.Retry(3, func() error {
@@ -381,7 +402,7 @@ func (s *Server) eventSyncHandler(param map[string]interface{}) error {
 				req := &types.SyncConfigReq{
 					Datum: make([]*types.PushConfigReq, 0),
 				}
-				pairs, err := s.store.Items(util.BytesPrefix([]byte("config/")))
+				pairs, err := s.store.Items("config/")
 				for _, kv := range pairs {
 					var pr types.PushConfigReq
 					sKey := string(kv.Key)
@@ -429,18 +450,5 @@ func (s *Server) eventPubHandler(param map[string]interface{}) error {
 		return err
 	}
 
-	return nil
-}
-
-func (s *Server) pubConfig(topic string) error {
-	v, err := s.store.Get([]byte(topic))
-	if err != nil {
-		return err
-	}
-
-	err = s.psServer.Publish(topic, v)
-	if err != nil {
-		return err
-	}
 	return nil
 }

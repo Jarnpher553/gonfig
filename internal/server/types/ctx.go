@@ -3,13 +3,13 @@ package types
 import (
 	"github.com/Jarnpher553/gonfig/internal/logger"
 	"github.com/Jarnpher553/gonfig/internal/server/event"
-	"github.com/Jarnpher553/gonfig/internal/server/store"
+	"github.com/Jarnpher553/gonfig/internal/store"
 	"sync"
 )
 
 type ServiceCtx struct {
 	Meta    *ServerMetadata
-	Slaves  []*ServerMetadata
+	Slaves  *Slaves
 	Store   store.Store
 	Mux     *sync.Mutex
 	Trigger event.Trigger

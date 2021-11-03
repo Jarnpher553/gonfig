@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"github.com/Jarnpher553/gonfig/internal/server/event"
 	"github.com/Jarnpher553/gonfig/internal/server/types"
-	"github.com/Jarnpher553/gonfig/internal/utility/color"
+	"github.com/Jarnpher553/gonfig/internal/util/color"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -54,7 +54,7 @@ func RegisterSlaveHandler(s *types.ServiceCtx, method string) func(w http.Respon
 
 		s.Mux.Lock()
 		defer s.Mux.Unlock()
-		s.Slaves = append(s.Slaves, &slave)
+		*s.Slaves = append(*s.Slaves, &slave)
 
 		s.Logger.Info("Slave id:[%s] addr:[%s] online", color.Green(slave.ID), color.Green(slave.RAddr))
 
@@ -91,7 +91,7 @@ func UnregisterSlaveHandler(s *types.ServiceCtx, method string) func(w http.Resp
 		s.Mux.Lock()
 		defer s.Mux.Unlock()
 		index := -1
-		for idx, slave := range s.Slaves {
+		for idx, slave := range *s.Slaves {
 			if slave.ID == meta.ID {
 				index = idx
 				break
@@ -105,10 +105,10 @@ func UnregisterSlaveHandler(s *types.ServiceCtx, method string) func(w http.Resp
 				w.Write([]byte(http.StatusText(http.StatusInternalServerError)))
 				return
 			}
-			if index == len(s.Slaves)-1 {
-				s.Slaves = s.Slaves[:index]
+			if index == len(*s.Slaves)-1 {
+				*s.Slaves = (*s.Slaves)[:index]
 			} else {
-				s.Slaves = append(s.Slaves[:index], s.Slaves[index+1:]...)
+				*s.Slaves = append((*s.Slaves)[:index], (*s.Slaves)[index+1:]...)
 			}
 
 			s.Logger.Info("Slave id:[%s] addr:[%s] offline", color.Green(meta.ID), color.Green(meta.Addr))

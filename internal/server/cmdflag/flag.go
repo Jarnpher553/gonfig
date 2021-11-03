@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"github.com/Jarnpher553/gonfig/internal/logger"
 	"github.com/Jarnpher553/gonfig/internal/server/types"
-	ipAddr "github.com/Jarnpher553/gonfig/internal/utility/addr"
+	ipAddr "github.com/Jarnpher553/gonfig/internal/util/addr"
 	"net"
 	"os"
 	"strconv"

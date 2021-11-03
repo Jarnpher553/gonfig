@@ -2,6 +2,7 @@ package store
 
 import (
 	"github.com/syndtr/goleveldb/leveldb"
+	"github.com/syndtr/goleveldb/leveldb/iterator"
 	"github.com/syndtr/goleveldb/leveldb/util"
 )
 
@@ -14,7 +15,7 @@ type Store interface {
 	Put([]byte, []byte) error
 	Get([]byte) ([]byte, error)
 	Delete([]byte) error
-	Items(interface{}) ([]*KeyValuePair, error)
+	Items(prefix ...string) ([]*KeyValuePair, error)
 }
 
 type LeveldbStore struct {
@@ -33,9 +34,14 @@ func (store *LeveldbStore) Delete(k []byte) error {
 	return store.DB.Delete(k, nil)
 }
 
-func (store *LeveldbStore) Items(filter interface{}) ([]*KeyValuePair, error) {
+func (store *LeveldbStore) Items(prefix ...string) ([]*KeyValuePair, error) {
 	out := make([]*KeyValuePair, 0)
-	iter := store.DB.NewIterator(filter.(*util.Range), nil)
+	var iter iterator.Iterator
+	if len(prefix) != 0 && prefix[0] != "" {
+		iter = store.DB.NewIterator(util.BytesPrefix([]byte(prefix[0])), nil)
+	} else {
+		iter = store.DB.NewIterator(nil, nil)
+	}
 	for iter.Next() {
 		kv := &KeyValuePair{
 			Key:   iter.Key(),
