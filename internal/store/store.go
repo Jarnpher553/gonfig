@@ -3,6 +3,7 @@ package store
 import (
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/iterator"
+	"github.com/syndtr/goleveldb/leveldb/opt"
 	"github.com/syndtr/goleveldb/leveldb/util"
 )
 
@@ -23,7 +24,9 @@ type LeveldbStore struct {
 }
 
 func (store *LeveldbStore) Put(k []byte, v []byte) error {
-	return store.DB.Put(k, v, nil)
+	return store.DB.Put(k, v, &opt.WriteOptions{
+		Sync: true,
+	})
 }
 
 func (store *LeveldbStore) Get(k []byte) ([]byte, error) {
@@ -31,7 +34,9 @@ func (store *LeveldbStore) Get(k []byte) ([]byte, error) {
 }
 
 func (store *LeveldbStore) Delete(k []byte) error {
-	return store.DB.Delete(k, nil)
+	return store.DB.Delete(k, &opt.WriteOptions{
+		Sync: true,
+	})
 }
 
 func (store *LeveldbStore) Items(prefix ...string) ([]*KeyValuePair, error) {
@@ -43,9 +48,15 @@ func (store *LeveldbStore) Items(prefix ...string) ([]*KeyValuePair, error) {
 		iter = store.DB.NewIterator(nil, nil)
 	}
 	for iter.Next() {
+		key := make([]byte, len(iter.Key()))
+		value := make([]byte, len(iter.Value()))
+
+		copy(key, iter.Key())
+		copy(value, iter.Value())
+
 		kv := &KeyValuePair{
-			Key:   iter.Key(),
-			Value: iter.Value(),
+			Key:   key,
+			Value: value,
 		}
 		out = append(out, kv)
 	}
