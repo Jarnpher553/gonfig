@@ -195,7 +195,7 @@ func (s *Server) printRoutes() {
 
 //Serve run server
 func (s *Server) Serve() {
-	ln, err := listener.NewListener(s.meta.LAddr)
+	ln, err := listener.New(s.meta.LAddr)
 	if err != nil {
 		s.logger.Fatal("Create listener: %s", err)
 	}
@@ -212,7 +212,7 @@ func (s *Server) Serve() {
 	}()
 
 	rpcPort, _ := strconv.Atoi(strings.Split(s.meta.LAddr, ":")[1])
-	rpcLn, err := listener.NewListener(fmt.Sprintf(":%d", rpcPort+1))
+	rpcLn, err := listener.New(fmt.Sprintf(":%d", rpcPort+1))
 	if err != nil {
 		s.logger.Fatal("Create rpc listener: %s", err)
 	}
@@ -417,6 +417,9 @@ func (s *Server) eventSyncHandler(param map[string]interface{}) error {
 					Datum: make([]*types.PushConfigReq, 0),
 				}
 				pairs, err := s.store.Items("config/")
+				if err != nil {
+					return err
+				}
 				for _, kv := range pairs {
 					var pr types.PushConfigReq
 					sKey := string(kv.Key)

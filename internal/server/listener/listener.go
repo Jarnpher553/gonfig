@@ -9,7 +9,7 @@ type Listener struct {
 	*net.TCPListener
 }
 
-func NewListener(addr string) (*Listener, error) {
+func New(addr string) (*Listener, error) {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, err
