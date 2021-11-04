@@ -58,7 +58,7 @@ func Parse(log *logger.XLogger) *types.ServerCfg {
 		if envIP != "" {
 			addrIP = envIP
 		} else {
-			a, err := ipAddr.Extract(*addr)
+			a, err := ipAddr.ParseIP(*addr)
 			if err != nil {
 				log.Fatal("Server address: %s", err)
 			}

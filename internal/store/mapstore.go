@@ -7,15 +7,18 @@ import (
 	"unsafe"
 )
 
+//MapStore store use map
 type MapStore struct {
 	store map[string]string
 	mux   *sync.RWMutex
 }
 
+//NewMapStore 新建字典存储
 func NewMapStore() *MapStore {
 	return &MapStore{store: make(map[string]string), mux: &sync.RWMutex{}}
 }
 
+//Put set key/value
 func (m *MapStore) Put(key []byte, val []byte) error {
 	m.mux.Lock()
 	defer m.mux.Unlock()
@@ -25,6 +28,7 @@ func (m *MapStore) Put(key []byte, val []byte) error {
 	return nil
 }
 
+//Get get key/value
 func (m *MapStore) Get(key []byte) ([]byte, error) {
 	m.mux.RLock()
 	defer m.mux.RUnlock()
@@ -36,6 +40,7 @@ func (m *MapStore) Get(key []byte) ([]byte, error) {
 	return *(*[]byte)(unsafe.Pointer(&v)), nil
 }
 
+//Delete delete key/value
 func (m *MapStore) Delete(key []byte) error {
 	m.mux.Lock()
 	defer m.mux.Unlock()
@@ -44,6 +49,7 @@ func (m *MapStore) Delete(key []byte) error {
 	return nil
 }
 
+//Items get key/value pairs by key's prefix
 func (m *MapStore) Items(prefix ...string) ([]*KeyValuePair, error) {
 	m.mux.RLock()
 	defer m.mux.RUnlock()

@@ -7,6 +7,7 @@ import (
 	"sync"
 )
 
+//ServiceCtx server context used by http handler
 type ServiceCtx struct {
 	Meta    *ServerMetadata
 	Slaves  *Slaves

@@ -2,8 +2,9 @@ package retry
 
 import "time"
 
+// Retry retry several times to exec func with a interval
 func Retry(count int, f func() error, d ...time.Duration) error {
-	duration := time.Second * 5
+	duration := time.Second * 1
 	if len(d) != 0 {
 		duration = d[0]
 	}

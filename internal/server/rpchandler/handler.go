@@ -7,12 +7,14 @@ import (
 	"strings"
 )
 
+//RpcHandlerFunc rpc handler function type
 type RpcHandlerFunc func(s *types.ServiceCtx) func(c *arpc.Context)
 
+//EchoHandler client echo self information handler
 func EchoHandler(ctx *types.ServiceCtx) func(c *arpc.Context) {
 	return func(c *arpc.Context) {
 
-		var in types.ConfigMeta
+		var in types.ConfigMetadata
 		if err := c.Bind(&in); err != nil {
 			return
 		}

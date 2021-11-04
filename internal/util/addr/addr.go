@@ -28,7 +28,8 @@ func isPrivateIP(ipAddr string) bool {
 	return false
 }
 
-func Extract(addr string) (string, error) {
+//ParseIP parse address
+func ParseIP(addr string) (string, error) {
 	addrSplit := strings.Split(addr, ":")
 
 	if addrSplit[0] != "" && addrSplit[0] != "0.0.0.0" && addrSplit[0] != "[::]" {
@@ -37,7 +38,7 @@ func Extract(addr string) (string, error) {
 
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
-		return "", fmt.Errorf("Failed to get interface addresses! Err: %v", err)
+		return "", fmt.Errorf("failed to get interface addresses err: %v", err)
 	}
 
 	var ipAddr []byte
@@ -67,15 +68,13 @@ func Extract(addr string) (string, error) {
 		break
 	}
 
-	// return private ip
 	if ipAddr != nil {
 		return net.IP(ipAddr).String(), nil
 	}
 
-	// return public or virtual ip
 	if publicIP != nil {
 		return net.IP(publicIP).String(), nil
 	}
 
-	return "", fmt.Errorf("No IP address found, and explicit IP not provided")
+	return "", fmt.Errorf("no ip address found, and explicit ip not provided")
 }

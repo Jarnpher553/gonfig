@@ -20,7 +20,6 @@ import (
 	"github.com/lesismal/arpc/extension/pubsub"
 	alog "github.com/lesismal/arpc/log"
 	"github.com/satori/go.uuid"
-	"github.com/syndtr/goleveldb/leveldb"
 	"net/http"
 	"os"
 	"os/signal"
@@ -32,8 +31,9 @@ import (
 	"time"
 )
 
-type EventHandler func(map[string]interface{}) error
+type eventHandler func(map[string]interface{}) error
 
+//Server gonfig server
 type Server struct {
 	meta          *types.ServerMetadata
 	httpServer    *http.Server
@@ -48,29 +48,42 @@ type Server struct {
 	httpRouters   []*route.Router
 	rpcRouters    []string
 	trigger       event.Trigger
-	eventHandlers map[string]EventHandler
+	eventHandlers map[string]eventHandler
 	logger        *logger.XLogger
 	rpcLogger     *logger.XLogger
 }
 
-func New(persist ...store.Store) *Server {
+//New construct Server
+func New(args ...interface{}) *Server {
 	logx := &logger.XLogger{}
 
-	cfg := cmdflag.Parse(logx)
-
-	logx.SetLevel(alog.LevelInfo)
-	logx.SetModName("HttpServer")
-
-	var st store.Store
-	if len(persist) != 0 && persist[0] != nil {
-		st = persist[0]
-	} else {
-		db, err := leveldb.OpenFile("./db", nil)
+	var cfg *types.ServerCfg
+	var persist store.Store
+	for _, arg := range args {
+		switch v := arg.(type) {
+		case *types.ServerCfg:
+			if v != nil {
+				cfg = v
+			}
+		case store.Store:
+			if v != nil {
+				persist = v
+			}
+		}
+	}
+	if cfg == nil {
+		cfg = cmdflag.Parse(logx)
+	}
+	if persist == nil {
+		leveldbStore, err := store.NewLeveldbStore(store.StorageFile)
 		if err != nil {
 			logx.Fatal("Leveldb open: %s", err)
 		}
-		st = &store.LeveldbStore{DB: db}
+		persist = leveldbStore
 	}
+
+	logx.SetLevel(alog.LevelInfo)
+	logx.SetModName("HttpServer")
 
 	start := strings.Index(cfg.Addr, ":")
 	s := &Server{
@@ -80,13 +93,13 @@ func New(persist ...store.Store) *Server {
 			RAddr: cfg.Addr,
 			LAddr: cfg.Addr[start:],
 		},
-		store:       st,
+		store:       persist,
 		trigger:     make(chan *event.Event, 5),
 		logger:      logx,
 		httpRouters: make([]*route.Router, 0),
 		rpcRouters:  make([]string, 0),
 	}
-	s.eventHandlers = map[string]EventHandler{
+	s.eventHandlers = map[string]eventHandler{
 		event.SyncConfig: s.eventSyncHandler,
 		event.PubConfig:  s.eventPubHandler,
 	}
@@ -180,6 +193,7 @@ func (s *Server) printRoutes() {
 	}
 }
 
+//Serve run server
 func (s *Server) Serve() {
 	ln, err := listener.NewListener(s.meta.LAddr)
 	if err != nil {

@@ -5,12 +5,16 @@ import uuid "github.com/satori/go.uuid"
 type Role string
 
 const (
+	//RoleMaster roleMaster
 	RoleMaster = "Master"
-	RoleSlave  = "Slave"
+	//RoleSlave roleSlave
+	RoleSlave = "Slave"
 )
 
+//Slaves slaves
 type Slaves = []*ServerMetadata
 
+//ServerMetadata server metadata
 type ServerMetadata struct {
 	ID    uuid.UUID
 	Role  Role
@@ -18,7 +22,8 @@ type ServerMetadata struct {
 	RAddr string
 }
 
-type ConfigMeta struct {
+//ConfigMetadata config metadata
+type ConfigMetadata struct {
 	Name string
 	Tags []string
 }
