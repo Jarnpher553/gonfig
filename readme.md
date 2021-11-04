@@ -1,3 +1,4 @@
+[![Go](https://github.com/Jarnpher553/gonfig/actions/workflows/go.yml/badge.svg)](https://github.com/Jarnpher553/gonfig/actions/workflows/go.yml)
 # gonfig
 
 gonfig is a lightweight config center
